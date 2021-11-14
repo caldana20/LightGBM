@@ -391,7 +391,7 @@ class Ranking2Objective : public ObjectiveFunction {
     // get weights
     weights_ = metadata.weights();
     // get labels
-    labels2_ = metadata.labels2();
+    label2_ = metadata.labels2();
 
     // get boundries
     query_boundaries_ = metadata.query_boundaries();
@@ -416,19 +416,20 @@ class Ranking2Objective : public ObjectiveFunction {
       //obj1
       std::vector<score_t> gradients_obj1(cnt);
       std::vector<score_t> hessians_obj1(cnt);
-      GetGradientsForOneQuery(cnt, &one_query_labels[0], score + start,
-                              &gradients_obj1[0], &hessians_obj1[0], 1);
+      GetGradientsForOneQuery(i, cnt, &one_query_labels[0],
+                              score + start,
+                              &gradients_obj1[0], &hessians_obj1[0]);
 
       std::vector<label_t> one_query_labels2(cnt);
       for (data_size_t j = 0; j < cnt; ++j)
-        one_query_labels2[j] = labels2_[start + j];
+        one_query_labels2[j] = label2_[start + j];
 
       //obj2
       std::vector<score_t> gradients_obj2(cnt);
       std::vector<score_t> hessians_obj2(cnt);
-      GetGradientsForOneQuery2(cnt, &one_query_labels2[0], &one_query_labels[0],
+      GetGradientsForOneQuery2(i, cnt, &one_query_labels2[0],
                               score + start,
-                              &gradients_obj2[0], &hessians_obj2[0], 2);
+                              &gradients_obj2[0], &hessians_obj2[0]);
 
       //combine obj1 and obj2
       score_t* one_query_gradients = gradients + start;
@@ -449,16 +450,18 @@ class Ranking2Objective : public ObjectiveFunction {
     }
   }
 
-  virtual void GetGradientsForOneQuery(data_size_t cnt,
-                                       const label_t* label,
-                                       const double* score, score_t* lambdas,
-                                       score_t* hessians, const int obj_n) const = 0;
 
-  virtual void GetGradientsForOneQuery2(data_size_t cnt,
+  virtual void GetGradientsForOneQuery(data_size_t query_id,
+                                       data_size_t cnt,
                                        const label_t* label,
-                                       const label_t* label1,
                                        const double* score, score_t* lambdas,
-                                       score_t* hessians, const int obj_n) const = 0;
+                                       score_t* hessians) const = 0;
+
+  virtual void GetGradientsForOneQuery2(data_size_t query_id,
+                                       data_size_t cnt,
+                                       const label_t* label,
+                                       const double* score, score_t* lambdas,
+                                       score_t* hessians) const = 0;
 
   const char* GetName() const override = 0;
 
@@ -481,7 +484,7 @@ class Ranking2Objective : public ObjectiveFunction {
   /*! \brief Pointer of weights */
   const label_t* weights_;
   /*! \brief labels2 of weights */
-  const label_t* labels2_;
+  const label_t* label2_;
   /*! \brief Query boundaries */
   const data_size_t* query_boundaries_;
 };
@@ -515,19 +518,44 @@ class Lambdarank2objNDCG : public Ranking2Objective {
     Ranking2Objective::Init(metadata, num_data);
     DCGCalculator::CheckMetadata(metadata, num_queries_);
     DCGCalculator::CheckLabel(label_, num_data_);
+    inverse_max_dcgs_.resize(num_queries_);
+
+    //obj2
+    DCGCalculator::CheckLabel(label2_, num_data_);
+    inverse_max_dcgs_obj2_.resize(num_queries_);
+
+#pragma omp parallel for schedule(static)
+    for (data_size_t i = 0; i < num_queries_; ++i) {
+      inverse_max_dcgs_[i] = DCGCalculator::CalMaxDCGAtK(
+          truncation_level_, label_ + query_boundaries_[i],
+          query_boundaries_[i + 1] - query_boundaries_[i]);
+
+      //obj2
+      inverse_max_dcgs_obj2_[i] = DCGCalculator::CalMaxDCGAtK(
+          truncation_level_obj2_, label2_ + query_boundaries_[i],
+          query_boundaries_[i + 1] - query_boundaries_[i]);
+
+      if (inverse_max_dcgs_obj2_[i] > 0.0) {
+        inverse_max_dcgs_obj2_[i] = 1.0f / inverse_max_dcgs_obj2_[i];
+      }
+    }
+
 
     // construct Sigmoid table to speed up Sigmoid transform
     ConstructSigmoidTable();
   }
 
-  inline void GetGradientsForOneQuery(data_size_t cnt,
+  inline void GetGradientsForOneQuery(data_size_t query_id,
+                                      data_size_t cnt,
                                       const label_t* label, const double* score,
                                       score_t* lambdas,
-                                      score_t* hessians,
-                                      const int obj_n) const override {
-    // get max DCG on current query
-    const double inverse_max_dcg =
-      DCGCalculator::CalMaxDCGAtK((obj_n == 1) ? truncation_level_ : truncation_level_obj2_, label, cnt);
+                                      score_t* hessians) const override {
+  // get max DCG on current query
+    const double inverse_max_dcg = inverse_max_dcgs_[query_id];
+
+     // get max DCG on current query
+//    const double inverse_max_dcg =
+//      DCGCalculator::CalMaxDCGAtK((obj_n == 1) ? truncation_level_ : truncation_level_obj2_, label, cnt);
 
     // initialize with zero
     for (data_size_t i = 0; i < cnt; ++i) {
@@ -644,16 +672,18 @@ class Lambdarank2objNDCG : public Ranking2Objective {
   const char* GetName() const override { return "lambdarank"; }
 
   //obj2 gradient
-  inline void GetGradientsForOneQuery2(data_size_t cnt,
+  inline void GetGradientsForOneQuery2(data_size_t query_id,
+                                      data_size_t cnt,
                                       const label_t* label,
-                                      const label_t* label1,
                                       const double* score,
                                       score_t* lambdas,
-                                      score_t* hessians,
-                                      const int obj_n) const override {
+                                      score_t* hessians) const override {
+  // get max DCG on current query
+    const double inverse_max_dcg = inverse_max_dcgs_obj2_[query_id];
+
     // get max DCG on current query
-    const double inverse_max_dcg =
-      DCGCalculator::CalMaxDCGAtK((obj_n == 1) ? truncation_level_ : truncation_level_obj2_, label, cnt);
+//    const double inverse_max_dcg =
+//      DCGCalculator::CalMaxDCGAtK((obj_n == 1) ? truncation_level_ : truncation_level_obj2_, label, cnt);
 
     // initialize with zero
     for (data_size_t i = 0; i < cnt; ++i) {
@@ -679,13 +709,12 @@ class Lambdarank2objNDCG : public Ranking2Objective {
 
     double sum_lambdas = 0.0;
     // start accmulate lambdas by pairs that contain at least one document above truncation level
-    for (data_size_t i = 0; i < cnt - 1 && i < truncation_level_; ++i) {
+    for (data_size_t i = 0; i < cnt - 1 && i < truncation_level_obj2_; ++i) {
       if (score[sorted_idx[i]] == kMinScore) { continue; }
       for (data_size_t j = i + 1; j < cnt; ++j) {
         if (score[sorted_idx[j]] == kMinScore) { continue; }
         // skip pairs with the same labels
         if (label[sorted_idx[i]] == label[sorted_idx[j]]) { continue; }
-        if (label1[sorted_idx[i]] == label1[sorted_idx[j]]) {
           data_size_t high_rank, low_rank;
           if (label[sorted_idx[i]] > label[sorted_idx[j]]) {
             high_rank = i;
@@ -729,7 +758,6 @@ class Lambdarank2objNDCG : public Ranking2Objective {
           hessians[high] += static_cast<score_t>(p_hessian);
           // lambda is negative, so use minus to accumulate
           sum_lambdas -= 2 * p_lambda;
-        }
       }
     }
     if (norm_ && sum_lambdas > 0) {
@@ -751,6 +779,12 @@ class Lambdarank2objNDCG : public Ranking2Objective {
   int truncation_level_;
   /*! \brief Truncation position for max DCG for second objective*/
   int truncation_level_obj2_;
+  /*! \brief Cache inverse max DCG, speed up calculation */
+  std::vector<double> inverse_max_dcgs_;
+
+  //obj2
+  /*! \brief Cache inverse max DCG, speed up calculation for obj2 */
+  std::vector<double> inverse_max_dcgs_obj2_;
 
   /*! \brief Cache result for sigmoid transform to speed up */
   std::vector<double> sigmoid_table_;
