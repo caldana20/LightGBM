@@ -33,7 +33,7 @@ Dataset::Dataset(data_size_t num_data) {
   CHECK_GT(num_data, 0);
   data_filename_ = "noname";
   num_data_ = num_data;
-  metadata_.Init(num_data_, NO_SPECIFIC, NO_SPECIFIC);
+  metadata_.Init(num_data_, NO_SPECIFIC, NO_SPECIFIC, NO_SPECIFIC);
   is_finish_load_ = false;
   group_bin_boundaries_.push_back(0);
   has_raw_ = false;
@@ -850,6 +850,16 @@ bool Dataset::SetFloatField(const char* field_name, const float* field_data,
 #else
     metadata_.SetWeights(field_data, num_element);
 #endif
+
+//obj2
+  } else if (name == std::string("label2") || name == std::string("labels2")) {
+#ifdef LABEL_T_USE_DOUBLE
+    Log::Fatal("Don't support LABEL_T_USE_DOUBLE");
+#else
+    metadata_.SetLabels2(field_data, num_element);
+#endif
+//
+
   } else {
     return false;
   }
@@ -898,6 +908,15 @@ bool Dataset::GetFloatField(const char* field_name, data_size_t* out_len,
     *out_ptr = metadata_.weights();
     *out_len = num_data_;
 #endif
+//obj2
+  } else if (name == std::string("label2") || name == std::string("labels2")) {
+#ifdef LABEL_T_USE_DOUBLE
+    Log::Fatal("Don't support LABEL_T_USE_DOUBLE");
+#else
+    *out_ptr = metadata_.labels2();
+    *out_len = num_data_;
+#endif
+//
   } else {
     return false;
   }

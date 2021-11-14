@@ -67,13 +67,20 @@ class DatasetLoader {
   /*! \brief Random generator*/
   Random random_;
   /*! \brief prediction function for initial model */
-  const PredictFunction predict_fun_;
+  const PredictFunction& predict_fun_;
   /*! \brief number of classes */
   int num_class_;
   /*! \brief index of label column */
   int label_idx_;
+
   /*! \brief index of weight column */
   int weight_idx_;
+
+  //obj2
+  /*! \brief index of label2 column */
+  int label2_idx_;
+  //
+
   /*! \brief index of group column */
   int group_idx_;
   /*! \brief Mapper from real feature index to used index*/

@@ -126,7 +126,12 @@ const std::unordered_map<std::string, std::string>& Config::alias_table() {
   {"use_two_round_loading", "two_round"},
   {"has_header", "header"},
   {"label", "label_column"},
+
   {"weight", "weight_column"},
+
+  //obj2
+  {"label2", "label2_column"},
+
   {"group", "group_column"},
   {"group_id", "group_column"},
   {"query_column", "group_column"},
@@ -265,6 +270,9 @@ const std::unordered_set<std::string>& Config::parameter_set() {
   "header",
   "label_column",
   "weight_column",
+  //obj2
+  "label2_column",
+  //
   "group_column",
   "ignore_column",
   "categorical_feature",
@@ -295,6 +303,12 @@ const std::unordered_set<std::string>& Config::parameter_set() {
   "poisson_max_delta_step",
   "tweedie_variance_power",
   "lambdarank_truncation_level",
+
+  //obj2
+  "lambdarank_truncation_level_obj2",
+  "weight_obj2",
+  //end
+
   "lambdarank_norm",
   "label_gain",
   "metric",
@@ -527,6 +541,10 @@ void Config::GetMembersFromString(const std::unordered_map<std::string, std::str
 
   GetString(params, "weight_column", &weight_column);
 
+  //obj2
+  GetString(params, "label2_column", &label2_column);
+  //
+
   GetString(params, "group_column", &group_column);
 
   GetString(params, "ignore_column", &ignore_column);
@@ -595,6 +613,18 @@ void Config::GetMembersFromString(const std::unordered_map<std::string, std::str
 
   GetInt(params, "lambdarank_truncation_level", &lambdarank_truncation_level);
   CHECK_GT(lambdarank_truncation_level, 0);
+
+
+  //start second objective parameters
+  GetInt(params, "lambdarank_truncation_level_obj2", &lambdarank_truncation_level_obj2);
+  CHECK_GT(lambdarank_truncation_level_obj2, 0);
+
+  GetDouble(params, "weight_obj2", &weight_obj2);
+  CHECK_GE(weight_obj2, 0.0);
+  //end second objective parameters
+
+  GetDouble(params, "poisson_max_delta_step", &poisson_max_delta_step);
+  CHECK_GT(poisson_max_delta_step, 0.0);
 
   GetBool(params, "lambdarank_norm", &lambdarank_norm);
 
@@ -717,6 +747,9 @@ std::string Config::SaveMembersToString() const {
   str_buf << "[header: " << header << "]\n";
   str_buf << "[label_column: " << label_column << "]\n";
   str_buf << "[weight_column: " << weight_column << "]\n";
+  //obj2
+  str_buf << "[label2_column: " << label2_column << "]\n";
+  //
   str_buf << "[group_column: " << group_column << "]\n";
   str_buf << "[ignore_column: " << ignore_column << "]\n";
   str_buf << "[categorical_feature: " << categorical_feature << "]\n";
@@ -734,6 +767,12 @@ std::string Config::SaveMembersToString() const {
   str_buf << "[poisson_max_delta_step: " << poisson_max_delta_step << "]\n";
   str_buf << "[tweedie_variance_power: " << tweedie_variance_power << "]\n";
   str_buf << "[lambdarank_truncation_level: " << lambdarank_truncation_level << "]\n";
+
+  //start obj2
+  str_buf << "[lambdarank_truncation_level_obj2: " << lambdarank_truncation_level_obj2 << "]\n";
+  str_buf << "[weight_obj2: " << weight_obj2 << "]\n";
+  //end obj2
+
   str_buf << "[lambdarank_norm: " << lambdarank_norm << "]\n";
   str_buf << "[label_gain: " << Common::Join(label_gain, ",") << "]\n";
   str_buf << "[eval_at: " << Common::Join(eval_at, ",") << "]\n";

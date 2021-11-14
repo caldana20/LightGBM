@@ -69,6 +69,7 @@ class RankingObjective : public ObjectiveFunction {
                                        const double* score, score_t* lambdas,
                                        score_t* hessians) const = 0;
 
+
   const char* GetName() const override = 0;
 
   std::string ToString() const override {
@@ -362,5 +363,417 @@ class RankXENDCG : public RankingObjective {
   mutable std::vector<Random> rands_;
 };
 
+
+/*
+*
+*
+* two
+*
+* objectives
+*/
+
+class Ranking2Objective : public ObjectiveFunction {
+ public:
+  explicit Ranking2Objective(const Config& config)
+      : seed_(config.objective_seed),
+        weight_obj2_(config.weight_obj2)
+      {}
+
+  explicit Ranking2Objective(const std::vector<std::string>&) : seed_(0),weight_obj2_(0.0) {}
+
+  ~Ranking2Objective() {}
+
+  void Init(const Metadata& metadata, data_size_t num_data) override {
+    num_data_ = num_data;
+    // get label
+    label_ = metadata.label();
+
+    // get weights
+    weights_ = metadata.weights();
+    // get labels
+    labels2_ = metadata.labels2();
+
+    // get boundries
+    query_boundaries_ = metadata.query_boundaries();
+    if (query_boundaries_ == nullptr) {
+      Log::Fatal("Ranking tasks require query information");
+    }
+    num_queries_ = metadata.num_queries();
+  }
+
+  void GetGradients(const double* score, score_t* gradients,
+                    score_t* hessians) const override {
+#pragma omp parallel for schedule(guided)
+    for (data_size_t i = 0; i < num_queries_; ++i) {
+      const data_size_t start = query_boundaries_[i];
+      const data_size_t cnt = query_boundaries_[i + 1] - query_boundaries_[i];
+
+
+      std::vector<label_t> one_query_labels(cnt);
+      for (data_size_t j = 0; j < cnt; ++j)
+        one_query_labels[j] = label_[start + j];
+
+      //obj1
+      std::vector<score_t> gradients_obj1(cnt);
+      std::vector<score_t> hessians_obj1(cnt);
+      GetGradientsForOneQuery(cnt, &one_query_labels[0], score + start,
+                              &gradients_obj1[0], &hessians_obj1[0], 1);
+
+      std::vector<label_t> one_query_labels2(cnt);
+      for (data_size_t j = 0; j < cnt; ++j)
+        one_query_labels2[j] = labels2_[start + j];
+
+      //obj2
+      std::vector<score_t> gradients_obj2(cnt);
+      std::vector<score_t> hessians_obj2(cnt);
+      GetGradientsForOneQuery2(cnt, &one_query_labels2[0], &one_query_labels[0],
+                              score + start,
+                              &gradients_obj2[0], &hessians_obj2[0], 2);
+
+      //combine obj1 and obj2
+      score_t* one_query_gradients = gradients + start;
+      score_t* one_query_hessians = hessians + start;
+      for (data_size_t j = 0; j < cnt; ++j) {
+        one_query_gradients[j] = (1.0 - weight_obj2_) * gradients_obj1[j] + weight_obj2_ * gradients_obj2[j];
+        one_query_hessians[j] = (1.0 - weight_obj2_) * hessians_obj1[j] + weight_obj2_ * hessians_obj2[j];
+      }
+
+      if (weights_ != nullptr) {
+        for (data_size_t j = 0; j < cnt; ++j) {
+          gradients[start + j] =
+              static_cast<score_t>(gradients[start + j] * weights_[start + j]);
+          hessians[start + j] =
+              static_cast<score_t>(hessians[start + j] * weights_[start + j]);
+        }
+      }
+    }
+  }
+
+  virtual void GetGradientsForOneQuery(data_size_t cnt,
+                                       const label_t* label,
+                                       const double* score, score_t* lambdas,
+                                       score_t* hessians, const int obj_n) const = 0;
+
+  virtual void GetGradientsForOneQuery2(data_size_t cnt,
+                                       const label_t* label,
+                                       const label_t* label1,
+                                       const double* score, score_t* lambdas,
+                                       score_t* hessians, const int obj_n) const = 0;
+
+  const char* GetName() const override = 0;
+
+  std::string ToString() const override {
+    std::stringstream str_buf;
+    str_buf << GetName();
+    return str_buf.str();
+  }
+
+  bool NeedAccuratePrediction() const override { return false; }
+
+ protected:
+  int seed_;
+  double weight_obj2_;
+  data_size_t num_queries_;
+  /*! \brief Number of data */
+  data_size_t num_data_;
+  /*! \brief Pointer of label */
+  const label_t* label_;
+  /*! \brief Pointer of weights */
+  const label_t* weights_;
+  /*! \brief labels2 of weights */
+  const label_t* labels2_;
+  /*! \brief Query boundaries */
+  const data_size_t* query_boundaries_;
+};
+
+
+class Lambdarank2objNDCG : public Ranking2Objective {
+ public:
+  explicit Lambdarank2objNDCG(const Config& config)
+      : Ranking2Objective(config),
+        sigmoid_(config.sigmoid),
+        norm_(config.lambdarank_norm),
+        truncation_level_(config.lambdarank_truncation_level),
+        truncation_level_obj2_(config.lambdarank_truncation_level_obj2) {
+    label_gain_ = config.label_gain;
+    // initialize DCG calculator
+    DCGCalculator::DefaultLabelGain(&label_gain_);
+    DCGCalculator::Init(label_gain_);
+    sigmoid_table_.clear();
+
+    if (sigmoid_ <= 0.0) {
+      Log::Fatal("Sigmoid param %f should be greater than zero", sigmoid_);
+    }
+  }
+
+  explicit Lambdarank2objNDCG(const std::vector<std::string>& strs)
+      : Ranking2Objective(strs) {}
+
+  ~Lambdarank2objNDCG() {}
+
+  void Init(const Metadata& metadata, data_size_t num_data) override {
+    Ranking2Objective::Init(metadata, num_data);
+    DCGCalculator::CheckMetadata(metadata, num_queries_);
+    DCGCalculator::CheckLabel(label_, num_data_);
+
+    // construct Sigmoid table to speed up Sigmoid transform
+    ConstructSigmoidTable();
+  }
+
+  inline void GetGradientsForOneQuery(data_size_t cnt,
+                                      const label_t* label, const double* score,
+                                      score_t* lambdas,
+                                      score_t* hessians,
+                                      const int obj_n) const override {
+    // get max DCG on current query
+    const double inverse_max_dcg =
+      DCGCalculator::CalMaxDCGAtK((obj_n == 1) ? truncation_level_ : truncation_level_obj2_, label, cnt);
+
+    // initialize with zero
+    for (data_size_t i = 0; i < cnt; ++i) {
+      lambdas[i] = 0.0f;
+      hessians[i] = 0.0f;
+    }
+    // get sorted indices for scores
+    std::vector<data_size_t> sorted_idx(cnt);
+    for (data_size_t i = 0; i < cnt; ++i) {
+      sorted_idx[i] = i;
+    }
+
+    std::stable_sort(
+        sorted_idx.begin(), sorted_idx.end(),
+        [score](data_size_t a, data_size_t b) { return score[a] > score[b]; });
+    // get best and worst score
+    const double best_score = score[sorted_idx[0]];
+    data_size_t worst_idx = cnt - 1;
+    if (worst_idx > 0 && score[sorted_idx[worst_idx]] == kMinScore) {
+      worst_idx -= 1;
+    }
+    const double worst_score = score[sorted_idx[worst_idx]];
+
+    double sum_lambdas = 0.0;
+    // start accmulate lambdas by pairs that contain at least one document above truncation level
+    for (data_size_t i = 0; i < cnt - 1 && i < truncation_level_; ++i) {
+      if (score[sorted_idx[i]] == kMinScore) { continue; }
+      for (data_size_t j = i + 1; j < cnt; ++j) {
+        if (score[sorted_idx[j]] == kMinScore) { continue; }
+        // skip pairs with the same labels
+        if (label[sorted_idx[i]] == label[sorted_idx[j]]) { continue; }
+        data_size_t high_rank, low_rank;
+        if (label[sorted_idx[i]] > label[sorted_idx[j]]) {
+          high_rank = i;
+          low_rank = j;
+        } else {
+          high_rank = j;
+          low_rank = i;
+        }
+        const data_size_t high = sorted_idx[high_rank];
+        const int high_label = static_cast<int>(label[high]);
+        const double high_score = score[high];
+        const double high_label_gain = label_gain_[high_label];
+        const double high_discount = DCGCalculator::GetDiscount(high_rank);
+        const data_size_t low = sorted_idx[low_rank];
+        const int low_label = static_cast<int>(label[low]);
+        const double low_score = score[low];
+        const double low_label_gain = label_gain_[low_label];
+        const double low_discount = DCGCalculator::GetDiscount(low_rank);
+
+        const double delta_score = high_score - low_score;
+
+        // get dcg gap
+        const double dcg_gap = high_label_gain - low_label_gain;
+        // get discount of this pair
+        const double paired_discount = fabs(high_discount - low_discount);
+        // get delta NDCG
+        double delta_pair_NDCG = dcg_gap * paired_discount * inverse_max_dcg;
+        // regular the delta_pair_NDCG by score distance
+        if (norm_ && best_score != worst_score) {
+          delta_pair_NDCG /= (0.01f + fabs(delta_score));
+        }
+        // calculate lambda for this pair
+        double p_lambda = GetSigmoid(delta_score);
+        double p_hessian = p_lambda * (1.0f - p_lambda);
+        // update
+        p_lambda *= -sigmoid_ * delta_pair_NDCG;
+        p_hessian *= sigmoid_ * sigmoid_ * delta_pair_NDCG;
+        lambdas[low] -= static_cast<score_t>(p_lambda);
+        hessians[low] += static_cast<score_t>(p_hessian);
+        lambdas[high] += static_cast<score_t>(p_lambda);
+        hessians[high] += static_cast<score_t>(p_hessian);
+        // lambda is negative, so use minus to accumulate
+        sum_lambdas -= 2 * p_lambda;
+      }
+    }
+    if (norm_ && sum_lambdas > 0) {
+      double norm_factor = std::log2(1 + sum_lambdas) / sum_lambdas;
+      for (data_size_t i = 0; i < cnt; ++i) {
+        lambdas[i] = static_cast<score_t>(lambdas[i] * norm_factor);
+        hessians[i] = static_cast<score_t>(hessians[i] * norm_factor);
+      }
+    }
+  }
+
+  inline double GetSigmoid(double score) const {
+    if (score <= min_sigmoid_input_) {
+      // too small, use lower bound
+      return sigmoid_table_[0];
+    } else if (score >= max_sigmoid_input_) {
+      // too large, use upper bound
+      return sigmoid_table_[_sigmoid_bins - 1];
+    } else {
+      return sigmoid_table_[static_cast<size_t>((score - min_sigmoid_input_) *
+                                                sigmoid_table_idx_factor_)];
+    }
+  }
+
+  void ConstructSigmoidTable() {
+    // get boundary
+    min_sigmoid_input_ = min_sigmoid_input_ / sigmoid_ / 2;
+    max_sigmoid_input_ = -min_sigmoid_input_;
+    sigmoid_table_.resize(_sigmoid_bins);
+    // get score to bin factor
+    sigmoid_table_idx_factor_ =
+        _sigmoid_bins / (max_sigmoid_input_ - min_sigmoid_input_);
+    // cache
+    for (size_t i = 0; i < _sigmoid_bins; ++i) {
+      const double score = i / sigmoid_table_idx_factor_ + min_sigmoid_input_;
+      sigmoid_table_[i] = 1.0f / (1.0f + std::exp(score * sigmoid_));
+    }
+  }
+
+  const char* GetName() const override { return "lambdarank"; }
+
+  //obj2 gradient
+  inline void GetGradientsForOneQuery2(data_size_t cnt,
+                                      const label_t* label,
+                                      const label_t* label1,
+                                      const double* score,
+                                      score_t* lambdas,
+                                      score_t* hessians,
+                                      const int obj_n) const override {
+    // get max DCG on current query
+    const double inverse_max_dcg =
+      DCGCalculator::CalMaxDCGAtK((obj_n == 1) ? truncation_level_ : truncation_level_obj2_, label, cnt);
+
+    // initialize with zero
+    for (data_size_t i = 0; i < cnt; ++i) {
+      lambdas[i] = 0.0f;
+      hessians[i] = 0.0f;
+    }
+    // get sorted indices for scores
+    std::vector<data_size_t> sorted_idx(cnt);
+    for (data_size_t i = 0; i < cnt; ++i) {
+      sorted_idx[i] = i;
+    }
+
+    std::stable_sort(
+        sorted_idx.begin(), sorted_idx.end(),
+        [score](data_size_t a, data_size_t b) { return score[a] > score[b]; });
+    // get best and worst score
+    const double best_score = score[sorted_idx[0]];
+    data_size_t worst_idx = cnt - 1;
+    if (worst_idx > 0 && score[sorted_idx[worst_idx]] == kMinScore) {
+      worst_idx -= 1;
+    }
+    const double worst_score = score[sorted_idx[worst_idx]];
+
+    double sum_lambdas = 0.0;
+    // start accmulate lambdas by pairs that contain at least one document above truncation level
+    for (data_size_t i = 0; i < cnt - 1 && i < truncation_level_; ++i) {
+      if (score[sorted_idx[i]] == kMinScore) { continue; }
+      for (data_size_t j = i + 1; j < cnt; ++j) {
+        if (score[sorted_idx[j]] == kMinScore) { continue; }
+        // skip pairs with the same labels
+        if (label[sorted_idx[i]] == label[sorted_idx[j]]) { continue; }
+        if (label1[sorted_idx[i]] == label1[sorted_idx[j]]) {
+          data_size_t high_rank, low_rank;
+          if (label[sorted_idx[i]] > label[sorted_idx[j]]) {
+            high_rank = i;
+            low_rank = j;
+          } else {
+            high_rank = j;
+            low_rank = i;
+          }
+          const data_size_t high = sorted_idx[high_rank];
+          const int high_label = static_cast<int>(label[high]);
+          const double high_score = score[high];
+          const double high_label_gain = label_gain_[high_label];
+          const double high_discount = DCGCalculator::GetDiscount(high_rank);
+          const data_size_t low = sorted_idx[low_rank];
+          const int low_label = static_cast<int>(label[low]);
+          const double low_score = score[low];
+          const double low_label_gain = label_gain_[low_label];
+          const double low_discount = DCGCalculator::GetDiscount(low_rank);
+
+          const double delta_score = high_score - low_score;
+
+          // get dcg gap
+          const double dcg_gap = high_label_gain - low_label_gain;
+          // get discount of this pair
+          const double paired_discount = fabs(high_discount - low_discount);
+          // get delta NDCG
+          double delta_pair_NDCG = dcg_gap * paired_discount * inverse_max_dcg;
+          // regular the delta_pair_NDCG by score distance
+          if (norm_ && best_score != worst_score) {
+            delta_pair_NDCG /= (0.01f + fabs(delta_score));
+          }
+          // calculate lambda for this pair
+          double p_lambda = GetSigmoid(delta_score);
+          double p_hessian = p_lambda * (1.0f - p_lambda);
+          // update
+          p_lambda *= -sigmoid_ * delta_pair_NDCG;
+          p_hessian *= sigmoid_ * sigmoid_ * delta_pair_NDCG;
+          lambdas[low] -= static_cast<score_t>(p_lambda);
+          hessians[low] += static_cast<score_t>(p_hessian);
+          lambdas[high] += static_cast<score_t>(p_lambda);
+          hessians[high] += static_cast<score_t>(p_hessian);
+          // lambda is negative, so use minus to accumulate
+          sum_lambdas -= 2 * p_lambda;
+        }
+      }
+    }
+    if (norm_ && sum_lambdas > 0) {
+      double norm_factor = std::log2(1 + sum_lambdas) / sum_lambdas;
+      for (data_size_t i = 0; i < cnt; ++i) {
+        lambdas[i] = static_cast<score_t>(lambdas[i] * norm_factor);
+        hessians[i] = static_cast<score_t>(hessians[i] * norm_factor);
+      }
+    }
+  }
+
+
+ private:
+  /*! \brief Sigmoid param */
+  double sigmoid_;
+  /*! \brief Normalize the lambdas or not */
+  bool norm_;
+  /*! \brief Truncation position for max DCG */
+  int truncation_level_;
+  /*! \brief Truncation position for max DCG for second objective*/
+  int truncation_level_obj2_;
+
+  /*! \brief Cache result for sigmoid transform to speed up */
+  std::vector<double> sigmoid_table_;
+  /*! \brief Gains for labels */
+  std::vector<double> label_gain_;
+  /*! \brief Number of bins in simoid table */
+  size_t _sigmoid_bins = 1024 * 1024;
+  /*! \brief Minimal input of sigmoid table */
+  double min_sigmoid_input_ = -50;
+  /*! \brief Maximal input of Sigmoid table */
+  double max_sigmoid_input_ = 50;
+  /*! \brief Factor that covert score to bin in Sigmoid table */
+  double sigmoid_table_idx_factor_;
+};
+
+
+
+
+
 }  // namespace LightGBM
+
 #endif  // LightGBM_OBJECTIVE_RANK_OBJECTIVE_HPP_
+
+
+
+

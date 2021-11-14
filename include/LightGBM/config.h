@@ -192,7 +192,6 @@ struct Config {
   std::string tree_learner = "serial";
 
   // alias = num_thread, nthread, nthreads, n_jobs
-  // desc = used only in ``train``, ``prediction`` and ``refit`` tasks or in correspondent functions of language-specific packages
   // desc = number of threads for LightGBM
   // desc = ``0`` means default number of threads in OpenMP
   // desc = for the best speed, set this to the number of **real CPU cores**, not the number of threads (most CPUs use `hyper-threading <https://en.wikipedia.org/wiki/Hyper-threading>`__ to generate 2 threads per CPU core)
@@ -646,12 +645,12 @@ struct Config {
   // alias = two_round_loading, use_two_round_loading
   // desc = set this to ``true`` if data file is too big to fit in memory
   // desc = by default, LightGBM will map data file to memory and load features from memory. This will provide faster data loading speed, but may cause run out of memory error when the data file is very big
-  // desc = **Note**: works only in case of loading data directly from text file
+  // desc = **Note**: works only in case of loading data directly from file
   bool two_round = false;
 
   // alias = has_header
   // desc = set this to ``true`` if input data has header
-  // desc = **Note**: works only in case of loading data directly from text file
+  // desc = **Note**: works only in case of loading data directly from file
   bool header = false;
 
   // type = int or string
@@ -660,15 +659,19 @@ struct Config {
   // desc = use number for index, e.g. ``label=0`` means column\_0 is the label
   // desc = add a prefix ``name:`` for column name, e.g. ``label=name:is_click``
   // desc = if omitted, the first column in the training data is used as the label
-  // desc = **Note**: works only in case of loading data directly from text file
+  // desc = **Note**: works only in case of loading data directly from file
   std::string label_column = "";
+
+//obj2
+  std::string label2_column = "";
+//
 
   // type = int or string
   // alias = weight
   // desc = used to specify the weight column
   // desc = use number for index, e.g. ``weight=0`` means column\_0 is the weight
   // desc = add a prefix ``name:`` for column name, e.g. ``weight=name:weight``
-  // desc = **Note**: works only in case of loading data directly from text file
+  // desc = **Note**: works only in case of loading data directly from file
   // desc = **Note**: index starts from ``0`` and it doesn't count the label column when passing type is ``int``, e.g. when label is column\_0, and weight is column\_1, the correct parameter is ``weight=0``
   std::string weight_column = "";
 
@@ -677,7 +680,7 @@ struct Config {
   // desc = used to specify the query/group id column
   // desc = use number for index, e.g. ``query=0`` means column\_0 is the query id
   // desc = add a prefix ``name:`` for column name, e.g. ``query=name:query_id``
-  // desc = **Note**: works only in case of loading data directly from text file
+  // desc = **Note**: works only in case of loading data directly from file
   // desc = **Note**: data should be grouped by query\_id, for more information, see `Query Data <#query-data>`__
   // desc = **Note**: index starts from ``0`` and it doesn't count the label column when passing type is ``int``, e.g. when label is column\_0 and query\_id is column\_1, the correct parameter is ``query=0``
   std::string group_column = "";
@@ -687,7 +690,7 @@ struct Config {
   // desc = used to specify some ignoring columns in training
   // desc = use number for index, e.g. ``ignore_column=0,1,2`` means column\_0, column\_1 and column\_2 will be ignored
   // desc = add a prefix ``name:`` for column name, e.g. ``ignore_column=name:c1,c2,c3`` means c1, c2 and c3 will be ignored
-  // desc = **Note**: works only in case of loading data directly from text file
+  // desc = **Note**: works only in case of loading data directly from file
   // desc = **Note**: index starts from ``0`` and it doesn't count the label column when passing type is ``int``
   // desc = **Note**: despite the fact that specified columns will be completely ignored during the training, they still should have a valid format allowing LightGBM to load file successfully
   std::string ignore_column = "";
@@ -881,6 +884,11 @@ struct Config {
   // desc = controls the number of top-results to focus on during training, refer to "truncation level" in the Sec. 3 of `LambdaMART paper <https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/MSR-TR-2010-82.pdf>`__
   // desc = this parameter is closely related to the desirable cutoff ``k`` in the metric **NDCG@k** that we aim at optimizing the ranker for. The optimal setting for this parameter is likely to be slightly higher than ``k`` (e.g., ``k + 3``) to include more pairs of documents to train on, but perhaps not too high to avoid deviating too much from the desired target metric **NDCG@k**
   int lambdarank_truncation_level = 30;
+
+  //start obj2
+  int lambdarank_truncation_level_obj2 = 30;
+  double weight_obj2 = 0.0;
+  //end obj2
 
   // desc = used only in ``lambdarank`` application
   // desc = set this to ``true`` to normalize the lambdas for different queries, and improve the performance for unbalanced data

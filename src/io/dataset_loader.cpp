@@ -21,6 +21,11 @@ DatasetLoader::DatasetLoader(const Config& io_config, const PredictFunction& pre
   :config_(io_config), random_(config_.data_random_seed), predict_fun_(predict_fun), num_class_(num_class) {
   label_idx_ = 0;
   weight_idx_ = NO_SPECIFIC;
+
+  //obj2
+  label2_idx_ = NO_SPECIFIC;
+  //
+
   group_idx_ = NO_SPECIFIC;
   SetHeader(filename);
   store_raw_ = false;
@@ -35,7 +40,7 @@ DatasetLoader::~DatasetLoader() {
 void DatasetLoader::SetHeader(const char* filename) {
   std::unordered_map<std::string, int> name2idx;
   std::string name_prefix("name:");
-  if (filename != nullptr && CheckCanLoadFromBin(filename) == "") {
+  if (filename != nullptr) {
     TextReader<data_size_t> text_reader(filename, config_.header);
 
     // get column names
@@ -103,6 +108,7 @@ void DatasetLoader::SetHeader(const char* filename) {
         }
       }
     }
+
     // load weight idx
     if (config_.weight_column.size() > 0) {
       if (Common::StartsWith(config_.weight_column, name_prefix)) {
@@ -123,6 +129,31 @@ void DatasetLoader::SetHeader(const char* filename) {
       }
       ignore_features_.emplace(weight_idx_);
     }
+
+    //obj2
+    // load label2 idx
+    if (config_.label2_column.size() > 0) {
+      if (Common::StartsWith(config_.label2_column, name_prefix)) {
+        std::string name = config_.label2_column.substr(name_prefix.size());
+        if (name2idx.count(name) > 0) {
+          label2_idx_ = name2idx[name];
+          Log::Info("Using column %s as label2", name.c_str());
+        } else {
+          Log::Fatal("Could not find label2 column %s in data file", name.c_str());
+        }
+      } else {
+        if (!Common::AtoiAndCheck(config_.label2_column.c_str(), &label2_idx_)) {
+          Log::Fatal("label2_column is not a number,\n"
+                     "if you want to use a column name,\n"
+                     "please add the prefix \"name:\" to the column name");
+        }
+        Log::Info("Using column number %d as label2", label2_idx_);
+      }
+      ignore_features_.emplace(label2_idx_);
+    }
+    //
+
+
     // load group idx
     if (config_.group_column.size() > 0) {
       if (Common::StartsWith(config_.group_column, name_prefix)) {
@@ -144,6 +175,7 @@ void DatasetLoader::SetHeader(const char* filename) {
       ignore_features_.emplace(group_idx_);
     }
   }
+
   if (config_.categorical_feature.size() > 0) {
     if (Common::StartsWith(config_.categorical_feature, name_prefix)) {
       std::string names = config_.categorical_feature.substr(name_prefix.size());
@@ -218,7 +250,7 @@ Dataset* DatasetLoader::LoadFromFile(const char* filename, int rank, int num_mac
         dataset->ResizeRaw(dataset->num_data_);
       }
       // initialize label
-      dataset->metadata_.Init(dataset->num_data_, weight_idx_, group_idx_);
+      dataset->metadata_.Init(dataset->num_data_, weight_idx_, label2_idx_, group_idx_);
       // extract features
       ExtractFeaturesFromMemory(&text_data, parser.get(), dataset.get());
       text_data.clear();
@@ -238,7 +270,7 @@ Dataset* DatasetLoader::LoadFromFile(const char* filename, int rank, int num_mac
         dataset->ResizeRaw(dataset->num_data_);
       }
       // initialize label
-      dataset->metadata_.Init(dataset->num_data_, weight_idx_, group_idx_);
+      dataset->metadata_.Init(dataset->num_data_, weight_idx_, label2_idx_, group_idx_);
       Log::Info("Making second pass...");
       // extract features
       ExtractFeaturesFromFile(filename, parser.get(), used_data_indices, dataset.get());
@@ -281,7 +313,7 @@ Dataset* DatasetLoader::LoadFromFileAlignWithOtherDataset(const char* filename, 
       auto text_data = LoadTextDataToMemory(filename, dataset->metadata_, 0, 1, &num_global_data, &used_data_indices);
       dataset->num_data_ = static_cast<data_size_t>(text_data.size());
       // initialize label
-      dataset->metadata_.Init(dataset->num_data_, weight_idx_, group_idx_);
+      dataset->metadata_.Init(dataset->num_data_, weight_idx_, label2_idx_, group_idx_);
       dataset->CreateValid(train_data);
       if (dataset->has_raw()) {
         dataset->ResizeRaw(dataset->num_data_);
@@ -295,7 +327,7 @@ Dataset* DatasetLoader::LoadFromFileAlignWithOtherDataset(const char* filename, 
       dataset->num_data_ = static_cast<data_size_t>(text_reader.CountLine());
       num_global_data = dataset->num_data_;
       // initialize label
-      dataset->metadata_.Init(dataset->num_data_, weight_idx_, group_idx_);
+      dataset->metadata_.Init(dataset->num_data_, weight_idx_, label2_idx_, group_idx_);
       dataset->CreateValid(train_data);
       if (dataset->has_raw()) {
         dataset->ResizeRaw(dataset->num_data_);
@@ -809,48 +841,33 @@ void DatasetLoader::CheckDataset(const Dataset* dataset, bool is_load_from_binar
 
   if (is_load_from_binary) {
     if (dataset->max_bin_ != config_.max_bin) {
-      Log::Fatal("Dataset was constructed with parameter max_bin=%d. It cannot be changed to %d when loading from binary file.",
-                 dataset->max_bin_, config_.max_bin);
+      Log::Fatal("Dataset max_bin %d != config %d", dataset->max_bin_, config_.max_bin);
     }
     if (dataset->min_data_in_bin_ != config_.min_data_in_bin) {
-      Log::Fatal("Dataset was constructed with parameter min_data_in_bin=%d. It cannot be changed to %d when loading from binary file.",
-                 dataset->min_data_in_bin_, config_.min_data_in_bin);
+      Log::Fatal("Dataset min_data_in_bin %d != config %d", dataset->min_data_in_bin_, config_.min_data_in_bin);
     }
     if (dataset->use_missing_ != config_.use_missing) {
-      Log::Fatal("Dataset was constructed with parameter use_missing=%d. It cannot be changed to %d when loading from binary file.",
-                 dataset->use_missing_, config_.use_missing);
+      Log::Fatal("Dataset use_missing %d != config %d", dataset->use_missing_, config_.use_missing);
     }
     if (dataset->zero_as_missing_ != config_.zero_as_missing) {
-      Log::Fatal("Dataset was constructed with parameter zero_as_missing=%d. It cannot be changed to %d when loading from binary file.",
-                 dataset->zero_as_missing_, config_.zero_as_missing);
+      Log::Fatal("Dataset zero_as_missing %d != config %d", dataset->zero_as_missing_, config_.zero_as_missing);
     }
     if (dataset->bin_construct_sample_cnt_ != config_.bin_construct_sample_cnt) {
-      Log::Fatal("Dataset was constructed with parameter bin_construct_sample_cnt=%d. It cannot be changed to %d when loading from binary file.",
-                 dataset->bin_construct_sample_cnt_, config_.bin_construct_sample_cnt);
+      Log::Fatal("Dataset bin_construct_sample_cnt %d != config %d", dataset->bin_construct_sample_cnt_, config_.bin_construct_sample_cnt);
     }
     if ((dataset->max_bin_by_feature_.size() != config_.max_bin_by_feature.size()) ||
         !std::equal(dataset->max_bin_by_feature_.begin(), dataset->max_bin_by_feature_.end(),
             config_.max_bin_by_feature.begin())) {
-      Log::Fatal("Parameter max_bin_by_feature cannot be changed when loading from binary file.");
+      Log::Fatal("Dataset max_bin_by_feature does not match with config");
     }
 
-    if (config_.label_column != "") {
-      Log::Warning("Parameter label_column works only in case of loading data directly from text file. It will be ignored when loading from binary file.");
-    }
-    if (config_.weight_column != "") {
-      Log::Warning("Parameter weight_column works only in case of loading data directly from text file. It will be ignored when loading from binary file.");
-    }
-    if (config_.group_column != "") {
-      Log::Warning("Parameter group_column works only in case of loading data directly from text file. It will be ignored when loading from binary file.");
-    }
-    if (config_.ignore_column != "") {
-      Log::Warning("Parameter ignore_column works only in case of loading data directly from text file. It will be ignored when loading from binary file.");
-    }
-    if (config_.two_round) {
-      Log::Warning("Parameter two_round works only in case of loading data directly from text file. It will be ignored when loading from binary file.");
-    }
-    if (config_.header) {
-      Log::Warning("Parameter header works only in case of loading data directly from text file. It will be ignored when loading from binary file.");
+    int label_idx = -1;
+    if (Common::AtoiAndCheck(config_.label_column.c_str(), &label_idx)) {
+      if (dataset->label_idx_ != label_idx) {
+        Log::Fatal("Dataset label_idx %d != config %d", dataset->label_idx_, label_idx);
+      }
+    } else {
+      Log::Info("Recommend use integer for label index when loading data from binary for sanity check.");
     }
   }
 }
@@ -1012,6 +1029,11 @@ void DatasetLoader::ConstructBinMappersFromTextData(int rank, int num_machines,
   // check the range of label_idx, weight_idx and group_idx
   CHECK(label_idx_ >= 0 && label_idx_ <= dataset->num_total_features_);
   CHECK(weight_idx_ < 0 || weight_idx_ < dataset->num_total_features_);
+
+  //obj2
+  CHECK(label2_idx_ < 0 || label2_idx_ < dataset->num_total_features_);
+  //
+
   CHECK(group_idx_ < 0 || group_idx_ < dataset->num_total_features_);
 
   // fill feature_names_ if not header
@@ -1158,7 +1180,7 @@ void DatasetLoader::ExtractFeaturesFromMemory(std::vector<std::string>* text_dat
   double tmp_label = 0.0f;
   auto& ref_text_data = *text_data;
   std::vector<float> feature_row(dataset->num_features_);
-  if (!predict_fun_) {
+  if (predict_fun_ == nullptr) {
     OMP_INIT_EX();
     // if doesn't need to prediction with initial model
     #pragma omp parallel for schedule(static) private(oneline_features) firstprivate(tmp_label, feature_row)
@@ -1191,6 +1213,12 @@ void DatasetLoader::ExtractFeaturesFromMemory(std::vector<std::string>* text_dat
         } else {
           if (inner_data.first == weight_idx_) {
             dataset->metadata_.SetWeightAt(i, static_cast<label_t>(inner_data.second));
+
+          //obj2
+          } else if (inner_data.first == label2_idx_) {
+            dataset->metadata_.SetLabel2At(i, static_cast<label_t>(inner_data.second));
+          //
+
           } else if (inner_data.first == group_idx_) {
             dataset->metadata_.SetQueryAt(i, static_cast<data_size_t>(inner_data.second));
           }
@@ -1248,6 +1276,14 @@ void DatasetLoader::ExtractFeaturesFromMemory(std::vector<std::string>* text_dat
         } else {
           if (inner_data.first == weight_idx_) {
             dataset->metadata_.SetWeightAt(i, static_cast<label_t>(inner_data.second));
+
+          //obj2
+          } else if (inner_data.first == label2_idx_) {
+            dataset->metadata_.SetLabel2At(i, static_cast<label_t>(inner_data.second));
+
+          //
+
+
           } else if (inner_data.first == group_idx_) {
             dataset->metadata_.SetQueryAt(i, static_cast<data_size_t>(inner_data.second));
           }
@@ -1277,7 +1313,7 @@ void DatasetLoader::ExtractFeaturesFromMemory(std::vector<std::string>* text_dat
 void DatasetLoader::ExtractFeaturesFromFile(const char* filename, const Parser* parser,
                                             const std::vector<data_size_t>& used_data_indices, Dataset* dataset) {
   std::vector<double> init_score;
-  if (predict_fun_) {
+  if (predict_fun_ != nullptr) {
     init_score = std::vector<double>(dataset->num_data_ * num_class_);
   }
   std::function<void(data_size_t, const std::vector<std::string>&)> process_fun =
@@ -1321,6 +1357,12 @@ void DatasetLoader::ExtractFeaturesFromFile(const char* filename, const Parser* 
         } else {
           if (inner_data.first == weight_idx_) {
             dataset->metadata_.SetWeightAt(start_idx + i, static_cast<label_t>(inner_data.second));
+
+          //obj2
+          } else if (inner_data.first == label2_idx_) {
+            dataset->metadata_.SetLabel2At(start_idx + i, static_cast<label_t>(inner_data.second));
+          //
+
           } else if (inner_data.first == group_idx_) {
             dataset->metadata_.SetQueryAt(start_idx + i, static_cast<data_size_t>(inner_data.second));
           }

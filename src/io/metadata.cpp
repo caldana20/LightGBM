@@ -18,6 +18,11 @@ Metadata::Metadata() {
   weight_load_from_file_ = false;
   query_load_from_file_ = false;
   init_score_load_from_file_ = false;
+
+  //obj2
+  num_labels2_ = 0;
+  label2_load_from_file_ = false;
+  //
 }
 
 void Metadata::Init(const char* data_filename) {
@@ -25,6 +30,11 @@ void Metadata::Init(const char* data_filename) {
   // for lambdarank, it needs query data for partition data in distributed learning
   LoadQueryBoundaries();
   LoadWeights();
+
+  //obj2
+  LoadLabels2();
+  //
+
   LoadQueryWeights();
   LoadInitialScore();
 }
@@ -32,9 +42,10 @@ void Metadata::Init(const char* data_filename) {
 Metadata::~Metadata() {
 }
 
-void Metadata::Init(data_size_t num_data, int weight_idx, int query_idx) {
+void Metadata::Init(data_size_t num_data, int weight_idx, int label2_idx, int query_idx) {
   num_data_ = num_data;
   label_ = std::vector<label_t>(num_data_);
+
   if (weight_idx >= 0) {
     if (!weights_.empty()) {
       Log::Info("Using weights in data file, ignoring the additional weights file");
@@ -44,6 +55,19 @@ void Metadata::Init(data_size_t num_data, int weight_idx, int query_idx) {
     num_weights_ = num_data_;
     weight_load_from_file_ = false;
   }
+
+  //obj2
+  if (label2_idx >= 0) {
+    if (!labels2_.empty()) {
+      Log::Info("Using labels2 in data file, ignoring the additional labels2 file");
+      labels2_.clear();
+    }
+    labels2_ = std::vector<label_t>(num_data_, 0.0f);
+    num_labels2_ = num_data_;
+    label2_load_from_file_ = false;
+  }
+  //
+
   if (query_idx >= 0) {
     if (!query_boundaries_.empty()) {
       Log::Info("Using query id in data file, ignoring the additional query file");
@@ -74,6 +98,21 @@ void Metadata::Init(const Metadata& fullset, const data_size_t* used_indices, da
   } else {
     num_weights_ = 0;
   }
+
+
+  //obj2
+  if (!fullset.labels2_.empty()) {
+    labels2_ = std::vector<label_t>(num_used_indices);
+    num_labels2_ = num_used_indices;
+#pragma omp parallel for schedule(static, 512) if (num_used_indices >= 1024)
+    for (data_size_t i = 0; i < num_used_indices; ++i) {
+      labels2_[i] = fullset.labels2_[used_indices[i]];
+    }
+  } else {
+    num_labels2_ = 0;
+  }
+  //
+
 
   if (!fullset.init_score_.empty()) {
     int num_class = static_cast<int>(fullset.num_init_score_ / fullset.num_data_);
@@ -165,12 +204,25 @@ void Metadata::CheckOrPartition(data_size_t num_all_data, const std::vector<data
       LoadQueryWeights();
       queries_.clear();
     }
+
+
     // check weights
     if (!weights_.empty() && num_weights_ != num_data_) {
       weights_.clear();
       num_weights_ = 0;
       Log::Fatal("Weights size doesn't match data size");
     }
+
+    //obj2
+
+    // check labels2
+    if (!labels2_.empty() && num_labels2_ != num_data_) {
+      labels2_.clear();
+      num_labels2_ = 0;
+      Log::Fatal("Labels2 size doesn't match data size");
+    }
+
+    //end obj2
 
     // check query boundries
     if (!query_boundaries_.empty() && query_boundaries_[num_queries_] != num_data_) {
@@ -190,6 +242,7 @@ void Metadata::CheckOrPartition(data_size_t num_all_data, const std::vector<data
       Log::Fatal("Cannot used query_id for distributed training");
     }
     data_size_t num_used_data = static_cast<data_size_t>(used_data_indices.size());
+
     // check weights
     if (weight_load_from_file_) {
       if (weights_.size() > 0 && num_weights_ != num_all_data) {
@@ -209,6 +262,31 @@ void Metadata::CheckOrPartition(data_size_t num_all_data, const std::vector<data
         old_weights.clear();
       }
     }
+
+
+    //obj2
+    // check labels2
+    if (label2_load_from_file_) {
+      if (labels2_.size() > 0 && num_labels2_ != num_all_data) {
+        labels2_.clear();
+        num_labels2_ = 0;
+        Log::Fatal("labels2 size doesn't match data size");
+      }
+      // get local weights
+      if (!labels2_.empty()) {
+        auto old_labels2 = labels2_;
+        num_labels2_ = num_data_;
+        labels2_ = std::vector<label_t>(num_data_);
+#pragma omp parallel for schedule(static, 512)
+        for (int i = 0; i < static_cast<int>(used_data_indices.size()); ++i) {
+          labels2_[i] = old_labels2[used_data_indices[i]];
+        }
+        old_labels2.clear();
+      }
+    }
+    //
+
+
     if (query_load_from_file_) {
       // check query boundries
       if (!query_boundaries_.empty() && query_boundaries_[num_queries_] != num_all_data) {
@@ -342,6 +420,31 @@ void Metadata::SetWeights(const label_t* weights, data_size_t len) {
   weight_load_from_file_ = false;
 }
 
+
+//obj2
+void Metadata::SetLabels2(const label_t* labels2, data_size_t len) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  // save to nullptr
+  if (labels2 == nullptr || len == 0) {
+    labels2_.clear();
+    num_labels2_ = 0;
+    return;
+  }
+  if (num_data_ != len) {
+    Log::Fatal("Length of weights is not same with #data");
+  }
+  if (labels2_.empty()) { labels2_.resize(num_data_); }
+  num_labels2_ = num_data_;
+
+  #pragma omp parallel for schedule(static, 512) if (num_labels2_ >= 1024)
+  for (data_size_t i = 0; i < num_labels2_; ++i) {
+    labels2_[i] = Common::AvoidInf(labels2[i]);
+  }
+  label2_load_from_file_ = false;
+}
+//
+
+
 void Metadata::SetQuery(const data_size_t* query, data_size_t len) {
   std::lock_guard<std::mutex> lock(mutex_);
   // save to nullptr
@@ -368,6 +471,7 @@ void Metadata::SetQuery(const data_size_t* query, data_size_t len) {
   query_load_from_file_ = false;
 }
 
+
 void Metadata::LoadWeights() {
   num_weights_ = 0;
   std::string weight_filename(data_filename_);
@@ -389,6 +493,32 @@ void Metadata::LoadWeights() {
   }
   weight_load_from_file_ = true;
 }
+
+
+//obj2
+void Metadata::LoadLabels2() {
+  num_labels2_ = 0;
+  std::string label2_filename(data_filename_);
+  // default weight file name
+  label2_filename.append(".label2");
+  TextReader<size_t> reader(label2_filename.c_str(), false);
+  reader.ReadAllLines();
+  if (reader.Lines().empty()) {
+    return;
+  }
+  Log::Info("Loading labels2...");
+  num_labels2_ = static_cast<data_size_t>(reader.Lines().size());
+  labels2_ = std::vector<label_t>(num_labels2_);
+  #pragma omp parallel for schedule(static)
+  for (data_size_t i = 0; i < num_labels2_; ++i) {
+    double tmp_label2 = 0.0f;
+    Common::Atof(reader.Lines()[i].c_str(), &tmp_label2);
+    labels2_[i] = Common::AvoidInf(static_cast<label_t>(tmp_label2));
+  }
+  label2_load_from_file_ = true;
+}
+//
+
 
 void Metadata::LoadInitialScore() {
   num_init_score_ = 0;
@@ -479,6 +609,12 @@ void Metadata::LoadFromMemory(const void* memory) {
   mem_ptr += VirtualFileWriter::AlignedSize(sizeof(num_data_));
   num_weights_ = *(reinterpret_cast<const data_size_t*>(mem_ptr));
   mem_ptr += VirtualFileWriter::AlignedSize(sizeof(num_weights_));
+
+  //obj2
+  num_labels2_ = *(reinterpret_cast<const data_size_t*>(mem_ptr));
+  mem_ptr += VirtualFileWriter::AlignedSize(sizeof(num_labels2_));
+  //
+
   num_queries_ = *(reinterpret_cast<const data_size_t*>(mem_ptr));
   mem_ptr += VirtualFileWriter::AlignedSize(sizeof(num_queries_));
 
@@ -494,6 +630,17 @@ void Metadata::LoadFromMemory(const void* memory) {
     mem_ptr += VirtualFileWriter::AlignedSize(sizeof(label_t) * num_weights_);
     weight_load_from_file_ = true;
   }
+
+  //obj2
+  if (num_labels2_ > 0) {
+    if (!labels2_.empty()) { labels2_.clear(); }
+    labels2_ = std::vector<label_t>(num_labels2_);
+    std::memcpy(labels2_.data(), mem_ptr, sizeof(label_t) * num_labels2_);
+    mem_ptr += VirtualFileWriter::AlignedSize(sizeof(label_t) * num_labels2_);
+    label2_load_from_file_ = true;
+  }
+  //
+
   if (num_queries_ > 0) {
     if (!query_boundaries_.empty()) { query_boundaries_.clear(); }
     query_boundaries_ = std::vector<data_size_t>(num_queries_ + 1);
@@ -508,11 +655,24 @@ void Metadata::LoadFromMemory(const void* memory) {
 void Metadata::SaveBinaryToFile(const VirtualFileWriter* writer) const {
   writer->AlignedWrite(&num_data_, sizeof(num_data_));
   writer->AlignedWrite(&num_weights_, sizeof(num_weights_));
+
+  //obj2
+  writer->AlignedWrite(&num_labels2_, sizeof(num_labels2_));
+  //
+
   writer->AlignedWrite(&num_queries_, sizeof(num_queries_));
   writer->AlignedWrite(label_.data(), sizeof(label_t) * num_data_);
+
   if (!weights_.empty()) {
     writer->AlignedWrite(weights_.data(), sizeof(label_t) * num_weights_);
   }
+
+  //obj2
+  if (!labels2_.empty()) {
+    writer->AlignedWrite(labels2_.data(), sizeof(label_t) * num_labels2_);
+  }
+  //
+
   if (!query_boundaries_.empty()) {
     writer->AlignedWrite(query_boundaries_.data(),
                          sizeof(data_size_t) * (num_queries_ + 1));
@@ -526,11 +686,19 @@ void Metadata::SaveBinaryToFile(const VirtualFileWriter* writer) const {
 size_t Metadata::SizesInByte() const {
   size_t size = VirtualFileWriter::AlignedSize(sizeof(num_data_)) +
                 VirtualFileWriter::AlignedSize(sizeof(num_weights_)) +
+                //obj2
+                VirtualFileWriter::AlignedSize(sizeof(num_labels2_)) +
+                //
                 VirtualFileWriter::AlignedSize(sizeof(num_queries_));
   size += VirtualFileWriter::AlignedSize(sizeof(label_t) * num_data_);
   if (!weights_.empty()) {
     size += VirtualFileWriter::AlignedSize(sizeof(label_t) * num_weights_);
   }
+//obje2
+  if (!labels2_.empty()) {
+    size += VirtualFileWriter::AlignedSize(sizeof(label_t) * num_labels2_);
+  }
+//
   if (!query_boundaries_.empty()) {
     size += VirtualFileWriter::AlignedSize(sizeof(data_size_t) *
                                            (num_queries_ + 1));

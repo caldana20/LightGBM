@@ -29,6 +29,10 @@ ObjectiveFunction* ObjectiveFunction::CreateObjectiveFunction(const std::string&
     return new BinaryLogloss(config);
   } else if (type == std::string("lambdarank")) {
     return new LambdarankNDCG(config);
+  //start obj2
+  } else if (type == std::string("lambdarank2obj")) {
+    return new Lambdarank2objNDCG(config);
+  //end
   } else if (type == std::string("rank_xendcg")) {
     return new RankXENDCG(config);
   } else if (type == std::string("multiclass")) {
@@ -71,6 +75,10 @@ ObjectiveFunction* ObjectiveFunction::CreateObjectiveFunction(const std::string&
     return new BinaryLogloss(strs);
   } else if (type == std::string("lambdarank")) {
     return new LambdarankNDCG(strs);
+  //start obj
+  } else if (type == std::string("lambdarank2obj")) {
+    return new Lambdarank2objNDCG(strs);
+  //end obj
   } else if (type == std::string("rank_xendcg")) {
     return new RankXENDCG(strs);
   } else if (type == std::string("multiclass")) {

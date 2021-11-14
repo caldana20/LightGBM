@@ -70,7 +70,11 @@ class Metadata {
   * \param weight_idx Index of weight column, < 0 means doesn't exists
   * \param query_idx Index of query id column, < 0 means doesn't exists
   */
-  void Init(data_size_t num_data, int weight_idx, int query_idx);
+  //void Init(data_size_t num_data, int weight_idx, , int label2_idx, int query_idx);
+  //obj2
+  void Init(data_size_t num_data, int weight_idx, int label2_idx, int query_idx);
+  //
+
 
   /*!
   * \brief Partition label by used indices
@@ -89,6 +93,10 @@ class Metadata {
   void SetLabel(const label_t* label, data_size_t len);
 
   void SetWeights(const label_t* weights, data_size_t len);
+
+  //obj2
+  void SetLabels2(const label_t* labels2, data_size_t len);
+  //
 
   void SetQuery(const data_size_t* query, data_size_t len);
 
@@ -134,6 +142,18 @@ class Metadata {
     weights_[idx] = value;
   }
 
+  //obj2
+  /*!
+  * \brief Set Label2 for one record
+  * \param idx Index of this record
+  * \param value Weight value of this record
+  */
+  inline void SetLabel2At(data_size_t idx, label_t value) {
+    labels2_[idx] = value;
+  }
+  //
+
+
   /*!
   * \brief Set Query Id for one record
   * \param idx Index of this record
@@ -142,6 +162,7 @@ class Metadata {
   inline void SetQueryAt(data_size_t idx, data_size_t value) {
     queries_[idx] = static_cast<data_size_t>(value);
   }
+
 
   /*!
   * \brief Get weights, if not exists, will return nullptr
@@ -154,6 +175,21 @@ class Metadata {
       return nullptr;
     }
   }
+
+  //obj2
+  /*!
+  * \brief Get labels2, if not exists, will return nullptr
+  * \return Pointer of labels2
+  */
+  inline const label_t* labels2() const {
+    if (!labels2_.empty()) {
+      return labels2_.data();
+    } else {
+      return nullptr;
+    }
+  }
+  //
+
 
   /*!
   * \brief Get data boundaries on queries, if not exists, will return nullptr
@@ -215,6 +251,12 @@ class Metadata {
   void LoadInitialScore();
   /*! \brief Load wights from file */
   void LoadWeights();
+
+  //obj2
+  /*! \brief Load labels2 from file */
+  void LoadLabels2();
+  //
+
   /*! \brief Load query boundaries from file */
   void LoadQueryBoundaries();
   /*! \brief Load query wights */
@@ -223,12 +265,26 @@ class Metadata {
   std::string data_filename_;
   /*! \brief Number of data */
   data_size_t num_data_;
+
   /*! \brief Number of weights, used to check correct weight file */
   data_size_t num_weights_;
+
+  //obj2
+  /*! \brief Number of weights, used to check correct weight file */
+  data_size_t num_labels2_;
+  //
+
   /*! \brief Label data */
   std::vector<label_t> label_;
+
   /*! \brief Weights data */
   std::vector<label_t> weights_;
+
+  //obj2
+  /*! \brief Weights data */
+  std::vector<label_t> labels2_;
+  //
+
   /*! \brief Query boundaries */
   std::vector<data_size_t> query_boundaries_;
   /*! \brief Query weights */
@@ -243,7 +299,13 @@ class Metadata {
   std::vector<data_size_t> queries_;
   /*! \brief mutex for threading safe call */
   std::mutex mutex_;
+
   bool weight_load_from_file_;
+
+  //obj2
+  bool label2_load_from_file_;
+  //
+
   bool query_load_from_file_;
   bool init_score_load_from_file_;
 };
