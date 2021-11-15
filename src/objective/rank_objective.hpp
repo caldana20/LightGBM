@@ -416,8 +416,7 @@ class Ranking2Objective : public ObjectiveFunction {
       //obj1
       std::vector<score_t> gradients_obj1(cnt);
       std::vector<score_t> hessians_obj1(cnt);
-      GetGradientsForOneQuery(i, cnt, &one_query_labels[0],
-                              score + start,
+      GetGradientsForOneQuery(i, cnt, &one_query_labels[0], score + start,
                               &gradients_obj1[0], &hessians_obj1[0]);
 
       std::vector<label_t> one_query_labels2(cnt);
@@ -427,7 +426,7 @@ class Ranking2Objective : public ObjectiveFunction {
       //obj2
       std::vector<score_t> gradients_obj2(cnt);
       std::vector<score_t> hessians_obj2(cnt);
-      GetGradientsForOneQuery2(i, cnt, &one_query_labels2[0],
+      GetGradientsForOneQuery2(i, cnt, &one_query_labels2[0], &one_query_labels[0],
                               score + start,
                               &gradients_obj2[0], &hessians_obj2[0]);
 
@@ -460,6 +459,7 @@ class Ranking2Objective : public ObjectiveFunction {
   virtual void GetGradientsForOneQuery2(data_size_t query_id,
                                        data_size_t cnt,
                                        const label_t* label,
+                                       const label_t* label1,
                                        const double* score, score_t* lambdas,
                                        score_t* hessians) const = 0;
 
@@ -675,6 +675,7 @@ class Lambdarank2objNDCG : public Ranking2Objective {
   inline void GetGradientsForOneQuery2(data_size_t query_id,
                                       data_size_t cnt,
                                       const label_t* label,
+                                      const label_t* label1,
                                       const double* score,
                                       score_t* lambdas,
                                       score_t* hessians) const override {
@@ -715,6 +716,7 @@ class Lambdarank2objNDCG : public Ranking2Objective {
         if (score[sorted_idx[j]] == kMinScore) { continue; }
         // skip pairs with the same labels
         if (label[sorted_idx[i]] == label[sorted_idx[j]]) { continue; }
+        if (label1[sorted_idx[i]] == label1[sorted_idx[j]]) {
           data_size_t high_rank, low_rank;
           if (label[sorted_idx[i]] > label[sorted_idx[j]]) {
             high_rank = i;
@@ -758,6 +760,7 @@ class Lambdarank2objNDCG : public Ranking2Objective {
           hessians[high] += static_cast<score_t>(p_hessian);
           // lambda is negative, so use minus to accumulate
           sum_lambdas -= 2 * p_lambda;
+        }
       }
     }
     if (norm_ && sum_lambdas > 0) {
