@@ -714,53 +714,51 @@ class Lambdarank2objNDCG : public Ranking2Objective {
       if (score[sorted_idx[i]] == kMinScore) { continue; }
       for (data_size_t j = i + 1; j < cnt; ++j) {
         if (score[sorted_idx[j]] == kMinScore) { continue; }
-        // skip pairs with the same labels
-        if (label[sorted_idx[i]] == label[sorted_idx[j]]) { continue; }
-        if (label1[sorted_idx[i]] == label1[sorted_idx[j]]) {
-          data_size_t high_rank, low_rank;
-          if (label[sorted_idx[i]] > label[sorted_idx[j]]) {
-            high_rank = i;
-            low_rank = j;
-          } else {
-            high_rank = j;
-            low_rank = i;
-          }
-          const data_size_t high = sorted_idx[high_rank];
-          const int high_label = static_cast<int>(label[high]);
-          const double high_score = score[high];
-          const double high_label_gain = label_gain_[high_label];
-          const double high_discount = DCGCalculator::GetDiscount(high_rank);
-          const data_size_t low = sorted_idx[low_rank];
-          const int low_label = static_cast<int>(label[low]);
-          const double low_score = score[low];
-          const double low_label_gain = label_gain_[low_label];
-          const double low_discount = DCGCalculator::GetDiscount(low_rank);
-
-          const double delta_score = high_score - low_score;
-
-          // get dcg gap
-          const double dcg_gap = high_label_gain - low_label_gain;
-          // get discount of this pair
-          const double paired_discount = fabs(high_discount - low_discount);
-          // get delta NDCG
-          double delta_pair_NDCG = dcg_gap * paired_discount * inverse_max_dcg;
-          // regular the delta_pair_NDCG by score distance
-          if (norm_ && best_score != worst_score) {
-            delta_pair_NDCG /= (0.01f + fabs(delta_score));
-          }
-          // calculate lambda for this pair
-          double p_lambda = GetSigmoid(delta_score);
-          double p_hessian = p_lambda * (1.0f - p_lambda);
-          // update
-          p_lambda *= -sigmoid_ * delta_pair_NDCG;
-          p_hessian *= sigmoid_ * sigmoid_ * delta_pair_NDCG;
-          lambdas[low] -= static_cast<score_t>(p_lambda);
-          hessians[low] += static_cast<score_t>(p_hessian);
-          lambdas[high] += static_cast<score_t>(p_lambda);
-          hessians[high] += static_cast<score_t>(p_hessian);
-          // lambda is negative, so use minus to accumulate
-          sum_lambdas -= 2 * p_lambda;
+        if (label[sorted_idx[i]]  == label[sorted_idx[j]]) { continue; }
+        if (label1[sorted_idx[i]] != label1[sorted_idx[j]]) { continue; }
+        data_size_t high_rank, low_rank;
+        if (label[sorted_idx[i]] > label[sorted_idx[j]]) {
+          high_rank = i;
+          low_rank = j;
+        } else {
+          high_rank = j;
+          low_rank = i;
         }
+        const data_size_t high = sorted_idx[high_rank];
+        const int high_label = static_cast<int>(label[high]);
+        const double high_score = score[high];
+        const double high_label_gain = label_gain_[high_label];
+        const double high_discount = DCGCalculator::GetDiscount(high_rank);
+        const data_size_t low = sorted_idx[low_rank];
+        const int low_label = static_cast<int>(label[low]);
+        const double low_score = score[low];
+        const double low_label_gain = label_gain_[low_label];
+        const double low_discount = DCGCalculator::GetDiscount(low_rank);
+
+        const double delta_score = high_score - low_score;
+
+        // get dcg gap
+        const double dcg_gap = high_label_gain - low_label_gain;
+        // get discount of this pair
+        const double paired_discount = fabs(high_discount - low_discount);
+        // get delta NDCG
+        double delta_pair_NDCG = dcg_gap * paired_discount * inverse_max_dcg;
+        // regular the delta_pair_NDCG by score distance
+        if (norm_ && best_score != worst_score) {
+          delta_pair_NDCG /= (0.01f + fabs(delta_score));
+        }
+        // calculate lambda for this pair
+        double p_lambda = GetSigmoid(delta_score);
+        double p_hessian = p_lambda * (1.0f - p_lambda);
+        // update
+        p_lambda *= -sigmoid_ * delta_pair_NDCG;
+        p_hessian *= sigmoid_ * sigmoid_ * delta_pair_NDCG;
+        lambdas[low] -= static_cast<score_t>(p_lambda);
+        hessians[low] += static_cast<score_t>(p_hessian);
+        lambdas[high] += static_cast<score_t>(p_lambda);
+        hessians[high] += static_cast<score_t>(p_hessian);
+        // lambda is negative, so use minus to accumulate
+        sum_lambdas -= 2 * p_lambda;
       }
     }
     if (norm_ && sum_lambdas > 0) {
