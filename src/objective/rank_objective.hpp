@@ -377,9 +377,12 @@ class Ranking2Objective : public ObjectiveFunction {
   explicit Ranking2Objective(const Config& config)
       : seed_(config.objective_seed),
         weight_obj2_(config.weight_obj2)
-      {}
+      {
+      }
 
-  explicit Ranking2Objective(const std::vector<std::string>&) : seed_(0),weight_obj2_(0.0) {}
+  explicit Ranking2Objective(const std::vector<std::string>&) : seed_(0),weight_obj2_(0.0)
+  {
+  }
 
   ~Ranking2Objective() {}
 
@@ -399,7 +402,9 @@ class Ranking2Objective : public ObjectiveFunction {
       Log::Fatal("Ranking tasks require query information");
     }
     num_queries_ = metadata.num_queries();
+
   }
+
 
   void GetGradients(const double* score, score_t* gradients,
                     score_t* hessians) const override {
@@ -407,7 +412,6 @@ class Ranking2Objective : public ObjectiveFunction {
     for (data_size_t i = 0; i < num_queries_; ++i) {
       const data_size_t start = query_boundaries_[i];
       const data_size_t cnt = query_boundaries_[i + 1] - query_boundaries_[i];
-
 
       std::vector<label_t> one_query_labels(cnt);
       for (data_size_t j = 0; j < cnt; ++j)
@@ -433,9 +437,37 @@ class Ranking2Objective : public ObjectiveFunction {
       //combine obj1 and obj2
       score_t* one_query_gradients = gradients + start;
       score_t* one_query_hessians = hessians + start;
+
+      //calculate optimal directions
+      double alpha = 0.0;
+      double dot12 = 0.0;
+      double dot11 = 0.0;
+      double dot22 = 0.0;
+      double p = 0.0;
+      double q = 0.0;
       for (data_size_t j = 0; j < cnt; ++j) {
-        one_query_gradients[j] = (1.0 - weight_obj2_) * gradients_obj1[j] + weight_obj2_ * gradients_obj2[j];
-        one_query_hessians[j] = (1.0 - weight_obj2_) * hessians_obj1[j] + weight_obj2_ * hessians_obj2[j];
+        dot12 += gradients_obj1[j]*gradients_obj2[j];
+        dot11 += gradients_obj1[j]*gradients_obj1[j];
+        dot22 += gradients_obj2[j]*gradients_obj2[j];
+        double d = (gradients_obj2[j] - gradients_obj1[j]);
+        p += d * gradients_obj2[j];
+        q += d * d;
+      }
+      double weight_obj1 = 1 - weight_obj2_;
+      if (dot12 >= dot11) {
+        alpha = 1.0;
+      } else if (dot12 >= dot22) {
+        alpha = weight_obj1;
+      } else {
+        alpha = (p/q);
+        if (alpha < weight_obj1) {
+          alpha = weight_obj1;
+        }
+      }
+
+      for (data_size_t j = 0; j < cnt; ++j) {
+        one_query_gradients[j] = alpha * gradients_obj1[j] + (1 - alpha) * gradients_obj2[j];
+        one_query_hessians[j] = alpha * hessians_obj1[j] + (1 - alpha) * hessians_obj2[j];
       }
 
       if (weights_ != nullptr) {
